@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { db } from "../../infra/db/index.js";
+import { BullMqMessageQueue } from "../../infra/queue/message-queue.js";
+import { MessageProcessingStatusService } from "../messages/message-processing-status-service.js";
 import { ReceiveInboundMessageUseCase } from "../messages/receive-inbound-message-use-case.js";
 import { env } from "../../shared/env/index.js";
 import { createLogger } from "../../shared/logger/index.js";
@@ -15,8 +17,14 @@ type WebhookVerificationQuery = {
 
 const signatureService = new SignatureService(env.META_APP_SECRET);
 const receiveInboundMessageUseCase = new ReceiveInboundMessageUseCase(db);
+const processingStatusService = new MessageProcessingStatusService(db);
+const messageQueue = new BullMqMessageQueue();
 
 export const registerWebhookRoutes = async (app: FastifyInstance) => {
+  app.addHook("onClose", async () => {
+    await messageQueue.close();
+  });
+
   app.get<{ Querystring: WebhookVerificationQuery }>(
     "/webhook",
     async (request, reply) => {
@@ -113,11 +121,51 @@ export const registerWebhookRoutes = async (app: FastifyInstance) => {
             processingStatus: result.processingStatus,
             shouldRetryProcessing: result.shouldRetryProcessing,
           });
-          continue;
+
+          if (!result.shouldRetryProcessing) {
+            continue;
+          }
         }
 
         processed += 1;
-        messageLogger.info({ event: "message_persisted" });
+
+        if (result.status === "created") {
+          messageLogger.info({ event: "message_persisted" });
+        }
+
+        let jobId: string;
+
+        try {
+          const enqueuedJob = await messageQueue.enqueueProcessInboundMessage({
+            tenantId: result.tenantId,
+            conversationId: result.conversationId,
+            messageId: result.messageId,
+            correlationId,
+          });
+
+          jobId = enqueuedJob.jobId;
+        } catch (error) {
+          messageLogger.error({
+            event: "job_enqueue_failed",
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+          continue;
+        }
+
+        try {
+          await processingStatusService.markQueued({
+            tenantId: result.tenantId,
+            messageId: result.messageId,
+          });
+
+          messageLogger.info({ event: "job_enqueued", jobId });
+        } catch (error) {
+          messageLogger.error({
+            event: "message_mark_queued_failed",
+            jobId,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
       } catch (error) {
         requestLogger.warn({
           event: "webhook_message_processing_failed",
