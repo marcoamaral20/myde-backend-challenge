@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { registerConversationRoutes } from "./modules/conversations/conversation-routes.js";
 import { registerWebhookRoutes } from "./modules/webhook/webhook-routes.js";
 import { env } from "./shared/env/index.js";
 
@@ -22,6 +23,7 @@ export const buildHttpApp = async (): Promise<FastifyInstance> => {
   );
 
   await registerWebhookRoutes(app);
+  await registerConversationRoutes(app);
 
   return app;
 };
