@@ -16,6 +16,8 @@ const EnvSchema = z
     META_API_BASE_URL: z.string().url(),
     AI_PROVIDER: z.enum(["stub", "openai"]).default("stub"),
     OPENAI_API_KEY: z.string().optional(),
+    OPENAI_MODEL: z.string().min(1).default("gpt-4.1-mini"),
+    OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   })
   .superRefine((value, ctx) => {
     if (value.AI_PROVIDER === "openai" && !value.OPENAI_API_KEY?.trim()) {
