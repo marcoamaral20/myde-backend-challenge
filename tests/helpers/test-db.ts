@@ -11,10 +11,13 @@ export type TestDatabase = {
 };
 
 export const createTestDatabase = async (): Promise<TestDatabase> => {
-  const connectionString =
-    process.env.TEST_DATABASE_URL ??
-    process.env.DATABASE_URL ??
-    "postgres://postgres:postgres@localhost:5432/myde";
+  const connectionString = process.env.TEST_DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error(
+      "TEST_DATABASE_URL is required to run database tests. Example: TEST_DATABASE_URL=postgres://postgres:postgres@localhost:55432/myde_test npm test",
+    );
+  }
 
   const pool = new Pool({ connectionString });
   const db = drizzle(pool, { schema });
