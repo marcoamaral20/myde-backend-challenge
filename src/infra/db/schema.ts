@@ -118,6 +118,8 @@ export const messages = pgTable(
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     metaMessageId: text("meta_message_id"),
+    // Milestone 3: revisit this as a self-referencing FK when outbound reply
+    // lifecycle and retry semantics are implemented.
     replyToMessageId: uuid("reply_to_message_id"),
     direction: messageDirection("direction").notNull(),
     role: messageRole("role").notNull(),
@@ -147,6 +149,10 @@ export const messages = pgTable(
     )
       .on(table.tenantId, table.replyToMessageId)
       .where(sql`${table.replyToMessageId} is not null`),
+    metaMessageIdNullOrNotEmpty: check(
+      "messages_meta_message_id_null_or_not_empty",
+      sql`${table.metaMessageId} IS NULL OR btrim(${table.metaMessageId}) <> ''`,
+    ),
     inboundMetaMessageIdRequired: check(
       "messages_inbound_meta_message_id_required",
       sql`${table.direction} <> 'inbound' OR ${table.metaMessageId} IS NOT NULL`,

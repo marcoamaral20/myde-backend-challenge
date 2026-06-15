@@ -1,0 +1,1 @@
+ALTER TABLE "messages" ADD CONSTRAINT "messages_meta_message_id_null_or_not_empty" CHECK ("messages"."meta_message_id" IS NULL OR btrim("messages"."meta_message_id") <> '');
