@@ -101,12 +101,35 @@ The backend:
 1. reads the raw request body;
 2. validates `X-Hub-Signature-256` using `META_APP_SECRET`;
 3. extracts the tenant from `phoneNumberId`;
-4. persists the contact, conversation and inbound message;
-5. guarantees idempotency using the Meta message id;
-6. enqueues a background job;
-7. returns `200` quickly.
+4. generates a `correlationId` for the request;
+5. persists the contact, conversation and inbound message with `processingStatus = received`;
+6. guarantees idempotency using the Meta message id;
+7. enqueues a background job;
+8. updates the inbound message to `processingStatus = queued` only after enqueue succeeds;
+9. returns `200` quickly.
+
+If enqueue fails after the message is persisted, the webhook still returns `200`.
+The message remains with `processingStatus = received`, and the error is logged as `job_enqueue_failed`.
+This avoids unnecessary Meta redeliveries while keeping recovery explicit through the database.
+A future recovery process or manual retry can enqueue `received` messages again.
+
+If Meta redelivers a webhook for a message that already exists with `processingStatus = received` or `failed`, the system may try to enqueue it again instead of treating it as fully processed.
 
 The webhook handler must not call OpenAI directly.
+
+---
+
+### Supported Meta Payloads
+
+The first version intentionally handles a small subset of the Meta webhook payload:
+
+* only text messages are processed;
+* status events are ignored;
+* payloads without `messages` are ignored and acknowledged safely;
+* if a webhook contains multiple messages, each message should be processed independently where practical;
+* if `phoneNumberId` does not match a known tenant, the system logs the event and returns a safe response without processing the message.
+
+These constraints keep the challenge implementation focused while making the simplifications explicit.
 
 ---
 
@@ -117,13 +140,55 @@ The worker processes the queued job.
 It:
 
 1. loads the inbound message;
-2. loads the conversation history;
-3. loads the local knowledge base;
-4. calls the AI provider;
-5. saves the outbound message;
-6. sends the reply to the Meta API mock.
+2. verifies that the message can still be processed;
+3. marks the inbound message as `processing`;
+4. checks whether an outbound reply already exists for `replyToMessageId = inboundMessage.id`;
+5. loads the conversation history;
+6. loads the local knowledge base;
+7. calls the AI provider;
+8. saves the outbound message linked to the inbound message;
+9. sends the reply to the Meta API mock;
+10. marks the inbound message as `sent`.
 
 Failures in OpenAI or Meta API sending should be retried by the queue.
+
+The worker must be idempotent. If a retry happens after a partial failure, it must not send duplicate replies to Meta.
+
+The logical idempotency key for replies is:
+
+```txt
+replyToMessageId
+```
+
+Before generating or sending a response, the worker checks whether an outbound message already exists for the inbound message.
+If a reply exists but has not been sent, the worker reuses that reply instead of generating another one.
+If a reply has already been sent, the worker finishes without sending again.
+
+---
+
+## Processing Status
+
+Inbound messages use the following lifecycle:
+
+```txt
+received
+queued
+processing
+reply_generated
+sent
+failed
+```
+
+Status meaning:
+
+* `received`: persisted but not yet successfully enqueued;
+* `queued`: background job was created;
+* `processing`: worker started processing;
+* `reply_generated`: AI response was generated and persisted;
+* `sent`: response was sent to Meta;
+* `failed`: processing failed after retries or due to a non-retryable error.
+
+This is intentionally simpler than a full transactional outbox, but it avoids silently losing persisted messages when queue enqueue fails.
 
 ---
 
@@ -141,6 +206,12 @@ createdAt
 updatedAt
 ```
 
+Constraints:
+
+```txt
+unique(phoneNumberId)
+```
+
 ---
 
 ### contacts
@@ -154,6 +225,12 @@ waId
 name
 createdAt
 updatedAt
+```
+
+Constraints:
+
+```txt
+unique(tenantId, waId)
 ```
 
 ---
@@ -183,12 +260,35 @@ tenantId
 conversationId
 contactId
 metaMessageId
+replyToMessageId
 direction
 role
 content
-status
+processingStatus
+failureReason
+rawPayload
+receivedAt
+processedAt
+sentAt
 createdAt
 updatedAt
+```
+
+Notes:
+
+* `metaMessageId` is required for inbound messages and may be empty for outbound messages;
+* `replyToMessageId` links an outbound message to the inbound message it answers;
+* `processingStatus` is the only message status in the initial model;
+* `rawPayload` is optional and useful for debugging, but it may contain PII and should be handled carefully.
+
+The initial model does not include a generic `status` column in `messages`.
+If future Meta delivery/read webhooks are supported, they should use a separate `deliveryStatus` field instead of overloading `processingStatus`.
+
+Constraints:
+
+```txt
+unique(tenantId, metaMessageId) where metaMessageId is not null
+unique(tenantId, replyToMessageId) where replyToMessageId is not null
 ```
 
 ---
@@ -200,12 +300,19 @@ Meta may redeliver the same webhook more than once.
 To avoid duplicate processing, the `messages` table must enforce:
 
 ```txt
-unique(tenantId, metaMessageId)
+unique(tenantId, metaMessageId) where metaMessageId is not null
 ```
 
-If a message with the same `metaMessageId` already exists for the same tenant, the webhook returns `200` and does not enqueue a new job.
+If a message with the same `metaMessageId` already exists for the same tenant:
+
+* if it is already `queued`, `processing`, `reply_generated` or `sent`, the webhook returns `200` and does not enqueue another job;
+* if it is still `received` or `failed`, the system may attempt to enqueue it again;
+* no duplicate inbound message is created.
 
 This makes idempotency reliable even if multiple backend instances receive the same webhook concurrently.
+
+Outbound idempotency is handled with `replyToMessageId`.
+Only one outbound reply should exist for a given inbound message.
 
 ---
 
@@ -225,6 +332,9 @@ This is a simplified approach for the challenge.
 
 In production, this would be replaced by JWT, API keys, OAuth or another tenant-aware authentication strategy.
 
+If `x-tenant-id` is missing or invalid, REST endpoints return an error.
+When a conversation belongs to another tenant, the API must not reveal that the conversation exists.
+
 ---
 
 ## Queue Strategy
@@ -243,9 +353,35 @@ Example job behavior:
 ```txt
 attempts: 3
 backoff: exponential
+jobId: tenantId:messageId
+concurrency: low initial value
+timeout: fixed timeout per job
 ```
 
+Workers should support graceful shutdown so an in-flight job is either completed or retried by BullMQ.
+
 In production, SQS could be considered depending on the deployment environment.
+A dead-letter queue is a future improvement for permanently failed jobs.
+
+---
+
+## Environment Configuration
+
+Environment variables are validated at startup.
+
+`OPENAI_API_KEY` is required only when:
+
+```txt
+AI_PROVIDER=openai
+```
+
+When:
+
+```txt
+AI_PROVIDER=stub
+```
+
+the application can start without an OpenAI key.
 
 ---
 
@@ -270,6 +406,14 @@ The stub allows the project to run without an OpenAI API key and makes tests eas
 The AI response must be based only on the local knowledge base.
 
 If the answer is not available in the knowledge base, the assistant should clearly say it does not know instead of inventing information.
+
+The initial OpenAI strategy should:
+
+* limit the conversation history sent to the model;
+* use low temperature for more deterministic answers;
+* apply a timeout to the AI call;
+* log token usage when the provider returns it;
+* use an explicit fallback when the knowledge base does not contain enough information.
 
 ---
 
@@ -300,22 +444,32 @@ tenantId
 conversationId
 messageId
 metaMessageId
+replyToMessageId
 jobId
 correlationId
 event
 ```
+
+The `correlationId` is generated when the webhook is received and propagated to the queued job.
+It should appear in logs from both the HTTP request and the worker execution.
 
 Important events:
 
 ```txt
 webhook_received
 signature_invalid
+tenant_resolved
 message_already_processed
 message_persisted
 job_enqueued
+job_enqueue_failed
 worker_started
+worker_retrying
 ai_reply_generated
+ai_call_failed
 meta_reply_sent
+meta_send_failed
+message_processing_completed
 worker_failed
 ```
 
@@ -330,6 +484,8 @@ Lists conversations for the authenticated tenant.
 ### GET /conversations/:id/messages
 
 Lists messages for a specific conversation, only if the conversation belongs to the tenant.
+
+Messages should be ordered deterministically, preferably by `receivedAt` and then `createdAt`.
 
 No endpoint should return data from another tenant.
 
