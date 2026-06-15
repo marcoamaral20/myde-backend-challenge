@@ -5,6 +5,8 @@ export type LogContext = {
   tenantId?: string;
   conversationId?: string;
   messageId?: string;
+  inboundMessageId?: string;
+  outboundMessageId?: string;
   metaMessageId?: string;
   replyToMessageId?: string;
   jobId?: string;
