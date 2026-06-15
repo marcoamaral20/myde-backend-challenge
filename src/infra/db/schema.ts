@@ -32,6 +32,7 @@ export const processingStatus = pgEnum("processing_status", [
   "queued",
   "processing",
   "reply_generated",
+  "sending",
   "sent",
   "failed",
 ]);
