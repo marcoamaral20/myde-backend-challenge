@@ -1,0 +1,35 @@
+{
+  "name": "myde-backend-challenge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "dev:http": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "start:http": "node dist/src/server.js",
+    "start:worker": "node dist/src/worker.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx src/infra/db/seed.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "bullmq": "^5.56.9",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.4.0",
+    "openai": "^5.5.1",
+    "pg": "^8.16.2",
+    "pino": "^9.7.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.3",
+    "@types/pg": "^8.15.4",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
