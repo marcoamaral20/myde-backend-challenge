@@ -35,39 +35,41 @@ This avoids coupling the core logic directly to Fastify, BullMQ, OpenAI, Postgre
 
 ---
 
-## Proposed Folder Structure
+## Current Folder Structure
 
 ```txt
-src/
-  domain/
-    entities/
-    errors/
-    value-objects/
+.
+  docker-compose.yml
+  knowledge-base/                 Official Markdown knowledge-base assets
+  mock-meta-server/               Official Meta API mock
+  scripts/                        Local setup and validation helpers
+  .github/workflows/              CI workflow
 
-  modules/
-    webhook/
-    conversations/
-    messages/
-    tenants/
-    ai/
-    jobs/
+src/
+  app.ts                          Fastify app composition
+  server.ts                       HTTP process entrypoint
+  worker.ts                       BullMQ worker entrypoint
 
   infra/
-    db/
-    queue/
-    openai/
-    meta/
-    knowledge-base/
+    db/                           Drizzle schema, database connection and seed
+    knowledge-base/               Local knowledge-base loader
+    meta/                         Meta outbound HTTP client
+    queue/                        BullMQ queue adapter and job configuration
+
+  modules/
+    ai/                           AIProvider interface, OpenAI and stub providers
+    conversations/                Conversation REST routes and query services
+    messages/                     Inbound receive, processing and recovery use cases
+    tenants/                      REST tenant header middleware
+    webhook/                      Meta signature validation, parsing and routes
 
   shared/
-    env/
-    logger/
-    http/
-    middlewares/
-    errors/
+    env/                          Environment validation
+    logger/                       Structured logger setup
+    tracing/                      Correlation id helper
 
-  app.ts
-  server.ts
+tests/                            Vitest business and integration tests
+docs/                             Challenge, architecture, plan, backlog and validation docs
 ```
 
 ---
@@ -187,6 +189,11 @@ Status meaning:
 * `reply_generated`: AI response was generated and persisted;
 * `sent`: response was sent to Meta;
 * `failed`: processing failed after retries or due to a non-retryable error.
+
+Outbound replies use the same `processingStatus` enum and additionally move
+through `sending` while the worker is calling Meta. Ambiguous outbound
+`sending` or `failed` states are not automatically resent because the previous
+Meta request may already have been accepted.
 
 This is intentionally simpler than a full transactional outbox, but it avoids silently losing persisted messages when queue enqueue fails.
 
@@ -453,24 +460,32 @@ event
 The `correlationId` is generated when the webhook is received and propagated to the queued job.
 It should appear in logs from both the HTTP request and the worker execution.
 
-Important events:
+Important events include:
 
 ```txt
 webhook_received
 signature_invalid
-tenant_resolved
+webhook_payload_invalid_json
+webhook_payload_ignored
+tenant_unknown
 message_already_processed
 message_persisted
 job_enqueued
 job_enqueue_failed
+message_mark_queued_failed
+webhook_message_processing_failed
 worker_started
 worker_retrying
+outbound_send_state_ambiguous
 ai_reply_generated
 ai_call_failed
-meta_reply_sent
 meta_send_failed
 message_processing_completed
 worker_failed
+worker_failed_status_update_failed
+rest_tenant_resolved
+rest_conversations_listed
+rest_conversation_messages_listed
 ```
 
 ---
@@ -535,4 +550,4 @@ No unnecessary CRUD endpoints were added.
 * OpenTelemetry tracing;
 * metrics with Prometheus/Grafana;
 * admin panel for tenant management;
-* end-to-end tests with the mock Meta server.
+* automated end-to-end tests with the mock Meta server.
