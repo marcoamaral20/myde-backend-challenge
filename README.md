@@ -218,6 +218,9 @@ The expected local infrastructure is:
 - Redis on `localhost:6379`
 - Meta API mock on `localhost:8001`
 
+This checkout includes the official Docker compose, Mock Meta and knowledge-base
+assets from the challenge package.
+
 Create the environment file:
 
 ```bash
@@ -292,10 +295,6 @@ npm run build
 npm run start:http
 npm run start:worker
 ```
-
-Note: the challenge statement provides Docker infrastructure and a Meta mock. If
-your checkout does not include those files, use the equivalent local PostgreSQL,
-Redis and mock Meta services with the same environment variables.
 
 ## Simulating an Inbound Message
 
@@ -395,6 +394,10 @@ TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/myde_test npm test
 `TEST_DATABASE_URL` is required for database tests. The test helper runs Drizzle
 migrations before the suite and creates tenant data with a unique run id so the
 tests do not depend on production or shared seed data.
+
+`./scripts/setup-local.sh` creates the `myde_test` database automatically. If
+you follow the manual setup path instead, create `myde_test` before running the
+test command above.
 
 Covered scenarios:
 
