@@ -32,7 +32,7 @@ export class BullMqMessageQueue implements MessageQueue {
   }
 
   async enqueueProcessInboundMessage(job: ProcessInboundMessageJob) {
-    const jobId = `${job.tenantId}:${job.messageId}`;
+    const jobId = `${job.tenantId}-${job.messageId}`;
     const createdJob = await this.queue.add("process-inbound-message", job, {
       jobId,
     });
