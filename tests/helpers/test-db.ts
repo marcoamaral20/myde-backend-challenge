@@ -15,7 +15,7 @@ export const createTestDatabase = async (): Promise<TestDatabase> => {
 
   if (!connectionString) {
     throw new Error(
-      "TEST_DATABASE_URL is required to run database tests. Example: TEST_DATABASE_URL=postgres://postgres:postgres@localhost:55432/myde_test npm test",
+      "TEST_DATABASE_URL is required to run database tests. Example: TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/myde_test npm test",
     );
   }
 

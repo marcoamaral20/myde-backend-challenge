@@ -28,6 +28,44 @@ At a high level:
 
 The webhook path never calls OpenAI directly. AI work runs in the worker process.
 
+## Quick Setup
+
+For the lowest-friction local setup, run:
+
+```bash
+./scripts/setup-local.sh
+```
+
+The script validates Docker and Node.js, creates `.env` from `.env.example` when
+needed, installs npm dependencies, starts PostgreSQL, Redis and the Meta mock,
+then runs database migrations and seed data.
+
+To validate the local environment after setup, run:
+
+```bash
+./scripts/validate-local.sh
+```
+
+The validation script runs type checks, build, tests when `TEST_DATABASE_URL` is
+configured, and verifies the Meta mock health endpoint. It does not start the
+HTTP server or worker automatically.
+
+## Official Challenge Assets
+
+The following support assets were brought from the official challenge
+repository and intentionally kept at the repository root:
+
+- `mock-meta-server/`
+- `knowledge-base/`
+- `docker-compose.yml`
+- `SETUP-CREDENCIAIS.md`
+
+Keeping them at the root preserves compatibility with the original challenge,
+facilitates local validation, reduces differences from the official
+instructions and lets reviewers quickly find the expected resources. The
+solution code remains this repository's own implementation; only these support
+assets were reused.
+
 ## Architecture
 
 The project uses a modular architecture inspired by Clean Architecture /
@@ -191,6 +229,7 @@ Default local values:
 ```txt
 PORT=8000
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/myde
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/myde_test
 REDIS_URL=redis://localhost:6379
 META_VERIFY_TOKEN=local-verify-token
 META_APP_SECRET=local-app-secret
@@ -280,11 +319,12 @@ the mock Meta API.
 The seeded tenant uses:
 
 ```txt
-phoneNumberId=demo-phone-number-id
+phoneNumberId=123456789012345
 ```
 
 The inbound webhook is resolved by `metadata.phone_number_id` from the Meta
-payload. Make sure the mock sends `demo-phone-number-id`, or seed/update a
+payload. The bundled mock Meta server sends `123456789012345`, matching the
+default seed. If you change the mock payload, seed/update a
 tenant with the phone number id emitted by your mock. If the values do not
 match, the webhook will acknowledge the request but log the message as an
 unknown tenant and skip processing.
@@ -349,7 +389,7 @@ npm run build
 Run tests:
 
 ```bash
-TEST_DATABASE_URL=postgres://postgres:postgres@localhost:55432/myde_test npm test
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/myde_test npm test
 ```
 
 `TEST_DATABASE_URL` is required for database tests. The test helper runs Drizzle

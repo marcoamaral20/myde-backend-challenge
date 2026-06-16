@@ -4,7 +4,7 @@ import { logger } from "../../shared/logger/index.js";
 
 const demoTenant = {
   name: "Myde Demo",
-  phoneNumberId: "demo-phone-number-id",
+  phoneNumberId: "123456789012345",
 };
 
 await db
