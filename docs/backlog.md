@@ -263,7 +263,7 @@ feat: add idempotent inbound webhook handling
 
 - The queue uses Redis through BullMQ.
 - Job payload includes `tenantId`, `conversationId`, `messageId` and `correlationId`.
-- Job id uses a deterministic key such as `tenantId:messageId`.
+- Job id uses a deterministic key such as `tenantId-messageId`.
 - Jobs use retry attempts and exponential backoff.
 - Worker concurrency starts with a conservative value.
 

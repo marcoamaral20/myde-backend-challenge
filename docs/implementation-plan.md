@@ -280,7 +280,7 @@ Job options:
 ```txt
 attempts: 3
 backoff: exponential
-jobId: tenantId:messageId
+jobId: tenantId-messageId
 timeout: fixed timeout per job
 concurrency: low initial value
 ```

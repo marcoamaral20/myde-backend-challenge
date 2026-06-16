@@ -104,7 +104,7 @@ Key responsibilities:
   unsupported payloads safely.
 - `ReceiveInboundMessageUseCase`: resolves tenant, creates or reuses contact and
   conversation, and persists inbound messages idempotently.
-- `BullMqMessageQueue`: enqueues deterministic jobs using `tenantId:messageId`.
+- `BullMqMessageQueue`: enqueues deterministic jobs using `tenantId-messageId`.
 - `ProcessInboundMessageUseCase`: processes inbound jobs, handles outbound
   idempotency, calls AI and sends replies to Meta.
 - `ConversationService`: exposes tenant-scoped conversation and message reads.
@@ -274,7 +274,7 @@ npm run messages:reenqueue
 ```
 
 This command scans inbound messages in `received` or `failed`, enqueues them
-with the same deterministic `tenantId:messageId` job id used by the webhook
+with the same deterministic `tenantId-messageId` job id used by the webhook
 flow, and marks successfully enqueued messages as `queued`. It intentionally
 does not re-enqueue `queued`, `processing`, `reply_generated`, `sending` or
 `sent` messages.

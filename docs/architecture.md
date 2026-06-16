@@ -353,7 +353,7 @@ Example job behavior:
 ```txt
 attempts: 3
 backoff: exponential
-jobId: tenantId:messageId
+jobId: tenantId-messageId
 concurrency: low initial value
 timeout: fixed timeout per job
 ```
