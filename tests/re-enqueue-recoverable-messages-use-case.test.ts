@@ -176,7 +176,7 @@ class FakeMessageQueue implements MessageQueue {
 
   async enqueueProcessInboundMessage(job: ProcessInboundMessageJob) {
     this.jobs.push(job);
-    return { jobId: `${job.tenantId}:${job.messageId}` };
+    return { jobId: `${job.tenantId}-${job.messageId}` };
   }
 
   async close() {}
