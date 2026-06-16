@@ -6,7 +6,8 @@ Scope of this validation:
 
 - Review challenge requirements against the current repository state.
 - Identify implemented, partial and not implemented items.
-- Validate the end-to-end flow theoretically from code and documentation.
+- Validate the end-to-end flow from code, tests and a live run against the
+  official Mock Meta assets integrated in this checkout.
 - Document accepted trade-offs, known limitations and production improvements.
 
 This document does not introduce new functionality, tests, architecture changes,
@@ -27,27 +28,27 @@ function calling, metrics or DLQ behavior.
 | Multiple messages in one webhook payload | implemented | `src/modules/webhook/meta-payload-parser.ts`, `src/modules/webhook/webhook-routes.ts` | Parser collects supported messages and route iterates over `parsedPayload.messages`. No dedicated test currently covers this. |
 | Unknown tenant is handled safely | implemented | `src/modules/messages/receive-inbound-message-use-case.ts`, `src/modules/webhook/webhook-routes.ts` | Unknown `phoneNumberId` returns `unknown_tenant`, logs `tenant_unknown`, and does not process the message. |
 | PostgreSQL persistence for tenants, contacts, conversations and messages | implemented | `src/infra/db/schema.ts`, `drizzle/*.sql` | Tables and migrations exist for the required model. |
-| Seed data for a demo tenant | implemented | `src/infra/db/seed.ts` | Seeds `Myde Demo` with `phoneNumberId=demo-phone-number-id`. |
+| Seed data for a demo tenant | implemented | `src/infra/db/seed.ts` | Seeds `Myde Demo` with `phoneNumberId=123456789012345`, matching the official Mock Meta payload. |
 | Contact create/reuse by tenant and WhatsApp id | implemented | `src/modules/messages/receive-inbound-message-use-case.ts` | Uses `onConflictDoUpdate` on `(tenantId, waId)`. |
 | Active conversation create/reuse for the same contact | implemented | `src/modules/messages/receive-inbound-message-use-case.ts` | Finds active conversation or inserts with conflict handling. Covered by `tests/business-rules.test.ts`. |
 | Inbound message persistence with `received` status | implemented | `src/modules/messages/receive-inbound-message-use-case.ts` | Inserts inbound messages with `processingStatus = received`. |
 | Inbound idempotency by `metaMessageId` | implemented | `src/infra/db/schema.ts`, `src/modules/messages/receive-inbound-message-use-case.ts` | Unique index on `(tenantId, metaMessageId)` plus use-case conflict handling. Covered by `tests/business-rules.test.ts`. |
 | Webhook does not call OpenAI directly | implemented | `src/modules/webhook/webhook-routes.ts`, `src/worker.ts` | Webhook persists/enqueues only; AI provider is created in the worker path. |
 | BullMQ queue with Redis | implemented | `src/infra/queue/message-queue.ts`, `src/infra/queue/message-queue-config.ts` | Queue uses Redis connection from `REDIS_URL`. |
-| Deterministic job id | implemented | `src/infra/queue/message-queue.ts` | Uses `${tenantId}:${messageId}`. |
+| Deterministic job id | implemented | `src/infra/queue/message-queue.ts` | Uses `${tenantId}-${messageId}` to keep idempotency while avoiding BullMQ-forbidden characters. |
 | Queue retry/backoff | implemented | `src/infra/queue/message-queue-config.ts` | Uses 3 attempts and exponential backoff. |
 | Webhook updates inbound status from `received` to `queued` after enqueue | implemented | `src/modules/webhook/webhook-routes.ts`, `src/modules/messages/message-processing-status-service.ts` | Marked queued only after enqueue succeeds. |
 | Enqueue failure remains recoverable | implemented | `src/modules/webhook/webhook-routes.ts`, `src/modules/messages/re-enqueue-recoverable-messages-use-case.ts`, `src/re-enqueue-recoverable-messages.ts` | Enqueue errors are logged and message remains `received`; a manual command can re-enqueue inbound `received` or `failed` messages. |
 | Worker process separate from HTTP server | implemented | `src/worker.ts`, `src/server.ts` | Separate entrypoints and scripts exist. |
 | Worker marks lifecycle statuses | implemented | `src/modules/messages/process-inbound-message-use-case.ts` | Handles `processing`, `reply_generated`, `sending`, `sent`, and final `failed`. |
 | Worker loads conversation context | implemented | `src/modules/messages/process-inbound-message-use-case.ts` | Loads recent tenant-scoped messages from the conversation. |
-| Knowledge-base loading | partial | `src/infra/knowledge-base/knowledge-base-service.ts` | Loader supports local `.md` and `.txt` files under `knowledge-base/`, but that directory is not present in the current checkout. Missing directory returns empty context and logs `knowledge_base_missing`. |
+| Knowledge-base loading | implemented | `src/infra/knowledge-base/knowledge-base-service.ts`, `knowledge-base/` | Loader supports local `.md` and `.txt` files under `knowledge-base/`; the official Markdown knowledge-base assets are present in this checkout. |
 | AIProvider abstraction | implemented | `src/modules/ai/ai-provider.ts`, `src/modules/ai/index.ts` | Worker depends on the interface; provider selected by `AI_PROVIDER`. |
 | Stub AI provider | implemented | `src/modules/ai/stub-ai-provider.ts` | Allows local execution without OpenAI. |
 | OpenAI provider | implemented | `src/modules/ai/openai-provider.ts` | Uses OpenAI SDK, timeout, low temperature, limited context and fallback behavior. |
 | AI answer grounded in knowledge base | partial | `src/modules/ai/openai-provider.ts`, `src/modules/ai/stub-ai-provider.ts`, `src/infra/knowledge-base/knowledge-base-service.ts` | Prompt rules and fallback are implemented. Actual grounding quality depends on available `knowledge-base/` files and is not covered by automated tests. |
 | Function calling | not implemented | No function-calling module or tool schema exists | Explicitly treated as a future improvement/differentiator, not part of this P0 scope. |
-| Meta outbound send | implemented | `src/infra/meta/meta-client.ts`, `src/modules/messages/process-inbound-message-use-case.ts` | Sends `POST {META_API_BASE_URL}/{phoneNumberId}/messages` with WhatsApp text payload. Not validated against a live mock in this pass. |
+| Meta outbound send | implemented | `src/infra/meta/meta-client.ts`, `src/modules/messages/process-inbound-message-use-case.ts`, `mock-meta-server/` | Sends `POST {META_API_BASE_URL}/{phoneNumberId}/messages` with WhatsApp text payload. Validated against the official Mock Meta server via `GET /sent`. |
 | Outbound idempotency | implemented | `src/infra/db/schema.ts`, `src/modules/messages/process-inbound-message-use-case.ts`, `tests/process-inbound-message-use-case.test.ts` | Unique `(tenantId, replyToMessageId)` and reuse logic exist. Ambiguous `sending`/`failed` states intentionally stop for inspection to avoid duplicate sends. Worker idempotency scenarios are covered by automated tests. |
 | REST tenant middleware | implemented | `src/modules/tenants/rest-tenant-middleware.ts` | Requires `x-tenant-id`, validates UUID, loads tenant and attaches request context. |
 | `GET /conversations` | implemented | `src/modules/conversations/conversation-routes.ts`, `src/modules/conversations/conversation-repository.ts` | Lists conversations filtered by tenant with deterministic ordering. |
@@ -57,8 +58,8 @@ function calling, metrics or DLQ behavior.
 | Observability | implemented | `src/shared/logger/index.ts`, webhook/worker/meta logs | Structured logs include operational events and correlation context. Metrics/tracing are not implemented. |
 | Required business tests | implemented | `tests/signature-service.test.ts`, `tests/business-rules.test.ts`, `tests/helpers/test-db.ts` | Covers the five mandatory scenarios. Database tests require `TEST_DATABASE_URL`. |
 | README | implemented | `README.md` | Documents overview, architecture, running locally, simulation, REST API, tests, decisions, trade-offs, assumptions and improvements. |
-| Docker compose infrastructure in current checkout | not implemented | Current checkout does not include `docker-compose.yml` or `mock-meta-server/` | Challenge mentions provided infrastructure, but it is not present in this checkout. README documents the expectation and fallback requirement. |
-| Manual live E2E validation with mock Meta | not implemented in this pass | No mock Meta assets are available in the current checkout | This remains dependent on the assets from the original challenge package: Docker compose, mock Meta server and matching env values. No fake E2E test was added. |
+| Docker compose infrastructure in current checkout | implemented | `docker-compose.yml`, `mock-meta-server/`, `knowledge-base/` | Official support assets are integrated at the repository root to preserve compatibility with the challenge package. |
+| Manual live E2E validation with mock Meta | implemented | Official Mock Meta run on 2026-06-16 | Validated Mock Meta inbound, signed webhook, persistence, BullMQ enqueue, worker, knowledge-base-backed stub AI, outbound persistence, Meta outbound and `GET /sent`. |
 
 ## End-to-End Flow Verification
 
@@ -136,7 +137,7 @@ Observation:
 
 ### Worker
 
-Status: implemented and covered by focused worker tests, not live-validated through BullMQ in this document.
+Status: implemented, covered by focused worker tests and live-validated through BullMQ with the official Mock Meta server.
 
 Evidence:
 
@@ -144,10 +145,11 @@ Evidence:
 - `src/modules/messages/process-inbound-message-use-case.ts` loads inbound message, handles lifecycle status, calls AI, persists outbound and sends Meta outbound.
 - Worker failure handler marks final failures after retries.
 - `tests/process-inbound-message-use-case.test.ts` covers retry/idempotency scenarios with fake AI and Meta clients.
+- The official Mock Meta E2E run enqueued a BullMQ job and the worker completed it with `message_processing_completed`.
 
 Observation:
 
-- The tests exercise the processing use case directly. They do not start a real BullMQ worker process.
+- Automated tests exercise the processing use case directly. The live manual validation starts the real BullMQ worker process.
 
 ### AI Provider
 
@@ -167,16 +169,17 @@ Observation:
 
 ### Meta Outbound
 
-Status: implemented, not live-validated against the mock Meta server in this document.
+Status: implemented and live-validated against the official Mock Meta server.
 
 Evidence:
 
 - `src/infra/meta/meta-client.ts` posts to `/{phoneNumberId}/messages`.
 - Worker passes `phoneNumberId`, recipient WhatsApp id and generated text.
+- `GET /sent` returned one outbound message with `phoneNumberId=123456789012345`, `to=5511999990000` and generated text.
 
 Observation:
 
-- The current checkout does not contain `mock-meta-server/` or `docker-compose.yml`; live validation depends on the assets from the original challenge package.
+- The current checkout includes the official support assets required for local validation.
 
 ### REST API
 
@@ -221,7 +224,28 @@ Evidence:
 Observation:
 
 - Tests require a real PostgreSQL database for integration scenarios.
-- Tests now cover the worker processing use case, outbound idempotency, Meta failure propagation and ambiguous send states. No tests currently cover the full BullMQ worker process, mock Meta E2E, multiple-message payloads or OpenAI fallback behavior.
+- Tests now cover the worker processing use case, outbound idempotency, Meta failure propagation and ambiguous send states. No automated test currently covers the full BullMQ worker process, mock Meta E2E, multiple-message payloads or OpenAI fallback behavior; the mock Meta E2E was validated manually.
+
+## Official Mock Meta E2E Validation
+
+Status: passed.
+
+Validated flow:
+
+```txt
+Mock Meta -> Webhook -> signature validation -> persistence -> BullMQ -> Worker
+-> Knowledge Base -> AI Provider -> outbound persistence -> Meta outbound
+-> Mock Meta /sent
+```
+
+Evidence from the successful run:
+
+- `POST /simulate/inbound` returned `delivered=true`, `status=200` and a signed `wamid.*` message id.
+- HTTP logs included `webhook_received`, `message_persisted` and `job_enqueued`.
+- The deterministic BullMQ job id used the safe format `tenantId-messageId`.
+- Worker logs included `worker_started`, `ai_reply_generated` and `message_processing_completed`.
+- Database rows confirmed both inbound and outbound messages with `processing_status=sent`.
+- `GET http://localhost:8001/sent` returned one outbound message for `phoneNumberId=123456789012345`.
 
 ## Trade-offs
 
@@ -239,18 +263,17 @@ Observation:
 
 ## Known Limitations
 
-- `docker-compose.yml`, `mock-meta-server/` and `knowledge-base/` are not present in the current checkout, although the challenge statement references them as provided assets.
-- Live end-to-end validation with the mock Meta server was not performed because the current checkout does not include `docker-compose.yml` or `mock-meta-server/`.
-- The mock must send `metadata.phone_number_id` matching seeded tenant `demo-phone-number-id`; otherwise the webhook logs `tenant_unknown` and skips processing.
+- The official support assets are present in the current checkout, but the live Mock Meta validation is still manual rather than an automated CI test.
+- The mock must send `metadata.phone_number_id` matching seeded tenant `123456789012345`; otherwise the webhook logs `tenant_unknown` and skips processing.
 - `META_APP_SECRET` and `META_VERIFY_TOKEN` must match between backend and mock.
-- Knowledge-base grounding falls back safely when the local `knowledge-base/` directory is missing, but no real answer quality can be assessed without content.
+- Knowledge-base grounding can be validated locally with the official Markdown files, but answer quality is not measured by automated tests.
 - The OpenAI provider is implemented but not exercised by automated tests.
 - Worker retry, outbound idempotency and Meta send failure behavior are covered at use-case level by automated tests, but not by a full BullMQ process test.
 - No function calling, rate limiting, metrics, DLQ dashboard or failed-job inspection command exists.
 - Recoverable message re-enqueue is a manual command; there is no scheduler or operator UI for it.
 - REST auth is a challenge-only simplification and should not be used as production authorization.
 - Raw webhook payload storage can include PII and should be revisited for production retention/privacy requirements.
-- There is no dedicated E2E test that starts HTTP server, Redis, worker, Postgres and mock Meta together; this remains dependent on the original mock Meta assets.
+- There is no dedicated automated E2E test that starts HTTP server, Redis, worker, Postgres and Mock Meta together.
 
 ## Production Improvements
 
@@ -264,7 +287,7 @@ Observation:
 - Add embeddings/vector search for larger knowledge bases.
 - Add document ingestion/versioning for knowledge-base content.
 - Add function calling for real actions such as order status lookup.
-- Add E2E tests using the mock Meta server when the original challenge assets are available in the checkout.
+- Add automated E2E tests using the integrated Mock Meta server.
 - Add process-level BullMQ worker tests if deeper queue integration confidence is needed.
 - Add stricter PII handling for raw payload retention, masking and deletion policies.
 
@@ -289,17 +312,16 @@ clear provider abstraction around AI.
 
 The main delivery risks are operational rather than architectural:
 
-- the current checkout does not include the provided Docker/mock/knowledge-base
-  assets referenced by the challenge;
-- the full mock Meta end-to-end flow has not been live-validated because the
-  current checkout does not include the mock assets;
-- worker retry and outbound idempotency are covered at use-case level, but not
-  with a full BullMQ worker process;
+- the live Mock Meta flow has been validated manually, but it is not yet an
+  automated CI test;
+- worker retry and outbound idempotency are covered at use-case level, while
+  the full BullMQ worker path has manual E2E evidence rather than automated
+  coverage;
 - production-grade auth, outbox, DLQ, metrics and retrieval are intentionally
   outside the current scope.
 
 Overall, this is a solid P0 challenge implementation with mature trade-off
-documentation. Before final submission, the highest-value remaining validation
-would be a live run with Postgres, Redis, the mock Meta server, matching
-`META_APP_SECRET`/`META_VERIFY_TOKEN`, and a mock payload whose
-`metadata.phone_number_id` matches the seeded tenant.
+documentation. The official Mock Meta E2E has passed locally with Postgres,
+Redis, the worker process, matching `META_APP_SECRET`/`META_VERIFY_TOKEN`, and
+the seeded `metadata.phone_number_id=123456789012345`. The highest-value
+remaining validation improvement would be automating that flow.
