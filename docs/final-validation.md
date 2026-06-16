@@ -37,7 +37,7 @@ function calling, metrics or DLQ behavior.
 | Deterministic job id | implemented | `src/infra/queue/message-queue.ts` | Uses `${tenantId}:${messageId}`. |
 | Queue retry/backoff | implemented | `src/infra/queue/message-queue-config.ts` | Uses 3 attempts and exponential backoff. |
 | Webhook updates inbound status from `received` to `queued` after enqueue | implemented | `src/modules/webhook/webhook-routes.ts`, `src/modules/messages/message-processing-status-service.ts` | Marked queued only after enqueue succeeds. |
-| Enqueue failure remains recoverable | implemented | `src/modules/webhook/webhook-routes.ts` | Enqueue errors are logged and message remains `received`; no automated recovery command exists. |
+| Enqueue failure remains recoverable | implemented | `src/modules/webhook/webhook-routes.ts`, `src/modules/messages/re-enqueue-recoverable-messages-use-case.ts`, `src/re-enqueue-recoverable-messages.ts` | Enqueue errors are logged and message remains `received`; a manual command can re-enqueue inbound `received` or `failed` messages. |
 | Worker process separate from HTTP server | implemented | `src/worker.ts`, `src/server.ts` | Separate entrypoints and scripts exist. |
 | Worker marks lifecycle statuses | implemented | `src/modules/messages/process-inbound-message-use-case.ts` | Handles `processing`, `reply_generated`, `sending`, `sent`, and final `failed`. |
 | Worker loads conversation context | implemented | `src/modules/messages/process-inbound-message-use-case.ts` | Loads recent tenant-scoped messages from the conversation. |
@@ -48,17 +48,17 @@ function calling, metrics or DLQ behavior.
 | AI answer grounded in knowledge base | partial | `src/modules/ai/openai-provider.ts`, `src/modules/ai/stub-ai-provider.ts`, `src/infra/knowledge-base/knowledge-base-service.ts` | Prompt rules and fallback are implemented. Actual grounding quality depends on available `knowledge-base/` files and is not covered by automated tests. |
 | Function calling | not implemented | No function-calling module or tool schema exists | Explicitly treated as a future improvement/differentiator, not part of this P0 scope. |
 | Meta outbound send | implemented | `src/infra/meta/meta-client.ts`, `src/modules/messages/process-inbound-message-use-case.ts` | Sends `POST {META_API_BASE_URL}/{phoneNumberId}/messages` with WhatsApp text payload. Not validated against a live mock in this pass. |
-| Outbound idempotency | partial | `src/infra/db/schema.ts`, `src/modules/messages/process-inbound-message-use-case.ts` | Unique `(tenantId, replyToMessageId)` and reuse logic exist. Ambiguous `sending`/`failed` states intentionally stop for inspection to avoid duplicate sends. No automated test currently covers worker idempotency. |
+| Outbound idempotency | implemented | `src/infra/db/schema.ts`, `src/modules/messages/process-inbound-message-use-case.ts`, `tests/process-inbound-message-use-case.test.ts` | Unique `(tenantId, replyToMessageId)` and reuse logic exist. Ambiguous `sending`/`failed` states intentionally stop for inspection to avoid duplicate sends. Worker idempotency scenarios are covered by automated tests. |
 | REST tenant middleware | implemented | `src/modules/tenants/rest-tenant-middleware.ts` | Requires `x-tenant-id`, validates UUID, loads tenant and attaches request context. |
 | `GET /conversations` | implemented | `src/modules/conversations/conversation-routes.ts`, `src/modules/conversations/conversation-repository.ts` | Lists conversations filtered by tenant with deterministic ordering. |
 | `GET /conversations/:id/messages` | implemented | `src/modules/conversations/conversation-routes.ts`, `src/modules/conversations/conversation-service.ts`, `src/modules/conversations/conversation-repository.ts` | Checks conversation ownership before listing messages. Cross-tenant access returns `404`. |
 | Multi-tenant isolation | implemented | `src/infra/db/schema.ts`, conversation repository, tests | Data model includes `tenantId`; REST queries filter by tenant. Negative tenant access is covered by `tests/business-rules.test.ts`. |
-| Resilience for OpenAI and Meta errors | partial | `src/infra/queue/message-queue-config.ts`, `src/worker.ts`, `src/modules/messages/process-inbound-message-use-case.ts`, `src/infra/meta/meta-client.ts` | BullMQ retries worker failures and final failure marks records. There is no DLQ or retry inspection dashboard. |
+| Resilience for OpenAI and Meta errors | partial | `src/infra/queue/message-queue-config.ts`, `src/worker.ts`, `src/modules/messages/process-inbound-message-use-case.ts`, `src/infra/meta/meta-client.ts`, `src/modules/messages/re-enqueue-recoverable-messages-use-case.ts` | BullMQ retries worker failures and final failure marks records. A manual re-enqueue command exists for recoverable inbound messages. There is no DLQ or retry inspection dashboard. |
 | Observability | implemented | `src/shared/logger/index.ts`, webhook/worker/meta logs | Structured logs include operational events and correlation context. Metrics/tracing are not implemented. |
 | Required business tests | implemented | `tests/signature-service.test.ts`, `tests/business-rules.test.ts`, `tests/helpers/test-db.ts` | Covers the five mandatory scenarios. Database tests require `TEST_DATABASE_URL`. |
 | README | implemented | `README.md` | Documents overview, architecture, running locally, simulation, REST API, tests, decisions, trade-offs, assumptions and improvements. |
-| Docker compose infrastructure in current checkout | not implemented | `find` shows no `docker-compose.yml` or `mock-meta-server/` in current repo state | Challenge mentions provided infrastructure, but it is not present in this checkout. README documents the expectation and fallback requirement. |
-| Manual live E2E validation with mock Meta | not implemented in this pass | No runtime evidence in this document | This document validates theoretically from code. A live run still requires Docker/mock infrastructure with matching env values. |
+| Docker compose infrastructure in current checkout | not implemented | Current checkout does not include `docker-compose.yml` or `mock-meta-server/` | Challenge mentions provided infrastructure, but it is not present in this checkout. README documents the expectation and fallback requirement. |
+| Manual live E2E validation with mock Meta | not implemented in this pass | No mock Meta assets are available in the current checkout | This remains dependent on the assets from the original challenge package: Docker compose, mock Meta server and matching env values. No fake E2E test was added. |
 
 ## End-to-End Flow Verification
 
@@ -128,24 +128,26 @@ Evidence:
 - `src/infra/queue/message-queue.ts` uses BullMQ and deterministic `jobId`.
 - `src/modules/webhook/webhook-routes.ts` enqueues after persistence.
 - `src/modules/messages/message-processing-status-service.ts` moves eligible messages to `queued`.
+- `src/modules/messages/re-enqueue-recoverable-messages-use-case.ts` can re-enqueue inbound `received` or `failed` messages and marks successful rows as `queued`.
 
 Observation:
 
-- There is no automated recovery command for messages left in `received` after enqueue failure.
+- Recovery is manual via `npm run messages:reenqueue`; there is still no scheduled recovery worker or transactional outbox.
 
 ### Worker
 
-Status: implemented, not live-validated in this document.
+Status: implemented and covered by focused worker tests, not live-validated through BullMQ in this document.
 
 Evidence:
 
 - `src/worker.ts` creates a BullMQ `Worker`.
 - `src/modules/messages/process-inbound-message-use-case.ts` loads inbound message, handles lifecycle status, calls AI, persists outbound and sends Meta outbound.
 - Worker failure handler marks final failures after retries.
+- `tests/process-inbound-message-use-case.test.ts` covers retry/idempotency scenarios with fake AI and Meta clients.
 
 Observation:
 
-- Worker retry/idempotency behavior is not covered by automated tests.
+- The tests exercise the processing use case directly. They do not start a real BullMQ worker process.
 
 ### AI Provider
 
@@ -165,7 +167,7 @@ Observation:
 
 ### Meta Outbound
 
-Status: implemented, not live-validated in this document.
+Status: implemented, not live-validated against the mock Meta server in this document.
 
 Evidence:
 
@@ -174,7 +176,7 @@ Evidence:
 
 Observation:
 
-- The current checkout does not contain `mock-meta-server/`; live validation depends on an external/provided mock.
+- The current checkout does not contain `mock-meta-server/` or `docker-compose.yml`; live validation depends on the assets from the original challenge package.
 
 ### REST API
 
@@ -219,12 +221,12 @@ Evidence:
 Observation:
 
 - Tests require a real PostgreSQL database for integration scenarios.
-- No tests currently cover the full worker, Meta mock, multiple-message payloads or OpenAI fallback behavior.
+- Tests now cover the worker processing use case, outbound idempotency, Meta failure propagation and ambiguous send states. No tests currently cover the full BullMQ worker process, mock Meta E2E, multiple-message payloads or OpenAI fallback behavior.
 
 ## Trade-offs
 
-- No transactional outbox: persistence and enqueue are separated. If enqueue fails, the message remains `received` for explicit recovery instead of being silently lost.
-- No automated recoverable-message re-enqueue command: the recovery path is visible in the database but still manual/future work.
+- No transactional outbox: persistence and enqueue are separated. If enqueue fails, the message remains `received` for explicit manual recovery instead of being silently lost.
+- Manual recoverable-message re-enqueue: `npm run messages:reenqueue` closes the basic recovery path, but it is not automatic or scheduled.
 - No vector database: knowledge base is read from local files, which is sufficient for a small challenge dataset but not ideal for larger retrieval.
 - No real authentication: REST tenant resolution uses `x-tenant-id`, adequate for demonstrating tenant filtering but not secure for production.
 - Local knowledge-base strategy: simple file loading avoids extra infrastructure but lacks semantic retrieval, document versioning and access control.
@@ -238,21 +240,22 @@ Observation:
 ## Known Limitations
 
 - `docker-compose.yml`, `mock-meta-server/` and `knowledge-base/` are not present in the current checkout, although the challenge statement references them as provided assets.
-- Live end-to-end validation with the mock Meta server was not performed as part of this document generation.
+- Live end-to-end validation with the mock Meta server was not performed because the current checkout does not include `docker-compose.yml` or `mock-meta-server/`.
 - The mock must send `metadata.phone_number_id` matching seeded tenant `demo-phone-number-id`; otherwise the webhook logs `tenant_unknown` and skips processing.
 - `META_APP_SECRET` and `META_VERIFY_TOKEN` must match between backend and mock.
 - Knowledge-base grounding falls back safely when the local `knowledge-base/` directory is missing, but no real answer quality can be assessed without content.
 - The OpenAI provider is implemented but not exercised by automated tests.
-- Worker retry, outbound idempotency and Meta send failure behavior are implemented but not covered by automated tests.
+- Worker retry, outbound idempotency and Meta send failure behavior are covered at use-case level by automated tests, but not by a full BullMQ process test.
 - No function calling, rate limiting, metrics, DLQ dashboard or failed-job inspection command exists.
+- Recoverable message re-enqueue is a manual command; there is no scheduler or operator UI for it.
 - REST auth is a challenge-only simplification and should not be used as production authorization.
 - Raw webhook payload storage can include PII and should be revisited for production retention/privacy requirements.
-- There is no dedicated E2E test that starts HTTP server, Redis, worker, Postgres and mock Meta together.
+- There is no dedicated E2E test that starts HTTP server, Redis, worker, Postgres and mock Meta together; this remains dependent on the original mock Meta assets.
 
 ## Production Improvements
 
 - Add a transactional outbox for durable enqueue/send coordination.
-- Add a recovery command or scheduled job for messages stuck in `received` or recoverable `failed` states.
+- Add a scheduled recovery job or operator workflow for messages stuck in `received` or recoverable `failed` states.
 - Add a DLQ or failed-job inspection workflow for exhausted BullMQ retries.
 - Add OpenTelemetry tracing and metrics for webhooks, queue latency, AI calls, retries, failures and Meta sends.
 - Add production-grade tenant authentication with JWT, API keys, OAuth or mTLS, depending on deployment context.
@@ -261,8 +264,8 @@ Observation:
 - Add embeddings/vector search for larger knowledge bases.
 - Add document ingestion/versioning for knowledge-base content.
 - Add function calling for real actions such as order status lookup.
-- Add E2E tests using the mock Meta server.
-- Add worker-specific tests for retry behavior, outbound idempotency and ambiguous send states.
+- Add E2E tests using the mock Meta server when the original challenge assets are available in the checkout.
+- Add process-level BullMQ worker tests if deeper queue integration confidence is needed.
 - Add stricter PII handling for raw payload retention, masking and deletion policies.
 
 ## Final Assessment
@@ -288,9 +291,10 @@ The main delivery risks are operational rather than architectural:
 
 - the current checkout does not include the provided Docker/mock/knowledge-base
   assets referenced by the challenge;
-- the full mock Meta end-to-end flow has not been live-validated in this
-  document;
-- worker retry and outbound idempotency are implemented but not tested;
+- the full mock Meta end-to-end flow has not been live-validated because the
+  current checkout does not include the mock assets;
+- worker retry and outbound idempotency are covered at use-case level, but not
+  with a full BullMQ worker process;
 - production-grade auth, outbox, DLQ, metrics and retrieval are intentionally
   outside the current scope.
 

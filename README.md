@@ -228,6 +228,24 @@ Start the worker in another terminal:
 npm run dev:worker
 ```
 
+Recover messages that were persisted but not successfully processed:
+
+```bash
+npm run messages:reenqueue
+```
+
+This command scans inbound messages in `received` or `failed`, enqueues them
+with the same deterministic `tenantId:messageId` job id used by the webhook
+flow, and marks successfully enqueued messages as `queued`. It intentionally
+does not re-enqueue `queued`, `processing`, `reply_generated`, `sending` or
+`sent` messages.
+
+Optionally limit each run:
+
+```bash
+REENQUEUE_LIMIT=50 npm run messages:reenqueue
+```
+
 For production-style local execution:
 
 ```bash
@@ -345,6 +363,12 @@ Covered scenarios:
 - repeated `metaMessageId` does not create duplicate inbound messages;
 - an active conversation is created or reused for the same contact;
 - tenant A cannot read tenant B conversation messages.
+- worker retry does not create duplicate outbound replies;
+- existing pending outbound replies are reused;
+- already sent outbound replies are not sent again;
+- Meta send failures propagate so BullMQ can retry;
+- ambiguous `sending` states are not resent automatically;
+- recoverable inbound messages in `received` or `failed` can be re-enqueued.
 
 The tests use `AI_PROVIDER=stub` behavior and do not depend on real OpenAI
 calls.
@@ -400,8 +424,8 @@ makes provider changes less invasive.
 The project does not implement a full transactional outbox. Instead, inbound
 messages are persisted before enqueue, and enqueue failure leaves the message in
 `received` for explicit recovery. This is simpler and sufficient for the
-challenge, but a production system should add an outbox or recovery command for
-stronger delivery guarantees.
+challenge, but a production system should add an outbox or scheduled recovery
+workflow for stronger delivery guarantees.
 
 ### No vector database
 
@@ -429,7 +453,7 @@ need.
 - Provider failover between AI providers or models.
 - Embeddings and vector search for larger knowledge bases.
 - Production tenant authentication with JWT, API keys or OAuth.
-- Recovery command for messages left in `received` after enqueue failure.
+- Scheduled recovery workflow for messages left in `received` after enqueue failure.
 - End-to-end tests against the mock Meta server.
 
 ## Assumptions
